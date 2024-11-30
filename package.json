@@ -17,6 +17,8 @@
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.5",
+    "node-fetch": "^2.7.0",
+    "openai": "^4.73.1",
     "socket.io": "^4.8.1"
   },
   "proxy": "http://localhost:5000"
