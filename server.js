@@ -245,6 +245,13 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+  // Handle chat messages
+socket.on('chatMessage', (message) => {
+  const userMessage = `Korisnik ${socket.id}: ${message}`;
+  io.emit('chatMessage', userMessage); // Broadcast the message to all connected clients
+});
+  
   
   socket.on('disconnect', () => {
     console.log('Korisnik isključen: ' + socket.id);
