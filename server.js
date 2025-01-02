@@ -985,7 +985,7 @@ app.post('/shop/open-chest', authenticateToken, (req, res) => {
 
     const userCoins = results[0].coins;
     if (userCoins >= chestCost) {
-      const hintsWon = [1, 5, 10][Math.floor(Math.random() * 3)];
+      const hintsWon = [10, 20, 75][Math.floor(Math.random() * 3)];
       const updateQuery = 'UPDATE users SET coins = coins - ?, hints = hints + ? WHERE id = ?';
       db.query(updateQuery, [chestCost, hintsWon, userId], (err, result) => {
         if (err) {
@@ -1000,7 +1000,34 @@ app.post('/shop/open-chest', authenticateToken, (req, res) => {
   });
 });
 
+// Add this route to handle second chest opening
+app.post('/shop/open-second-chest', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const chestCost = 50; // Set the cost for opening the second chest
 
+  const query = 'SELECT coins FROM users WHERE id = ?';
+  db.query(query, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching user coins:', err);
+      return res.status(500).json({ error: 'Error fetching user coins' });
+    }
+
+    const userCoins = results[0].coins;
+    if (userCoins >= chestCost) {
+      const hintsWon = [20, 50, 100, 200][Math.floor(Math.random() * 4)];
+      const updateQuery = 'UPDATE users SET coins = coins - ?, hints = hints + ? WHERE id = ?';
+      db.query(updateQuery, [chestCost, hintsWon, userId], (err, result) => {
+        if (err) {
+          console.error('Error updating user coins and hints:', err);
+          return res.status(500).json({ error: 'Error updating user coins and hints' });
+        }
+        res.json({ success: true, hintsWon });
+      });
+    } else {
+      res.status(400).json({ error: 'Not enough coins' });
+    }
+  });
+});
 
 // Pokrećemo server na portu 5000
 server.listen(5000, () => {
