@@ -12,6 +12,20 @@ require('dotenv').config();
 
 const { generateRandomQuestionAndAnswer } = require('./questionGenerator');
 
+// Add the generateHint function here
+const generateHint = (correctAnswer, currentAnswer) => {
+  if (!currentAnswer) {
+    return correctAnswer.charAt(0); // Return the first letter if no current answer
+  }
+
+  const nextCharIndex = currentAnswer.length;
+  if (nextCharIndex < correctAnswer.length) {
+    return correctAnswer.substring(0, nextCharIndex + 1); // Return the next letter
+  }
+
+  return correctAnswer; // If the current answer is already complete, return the full answer
+};
+
 const app = express();
 
 // Kreiraj HTTP server koji omogućuje WebSocket povezivanje
@@ -73,6 +87,7 @@ io.use((socket, next) => {
         return next(new Error('User not found'));
       }
       socket.username = results[0].username;
+      console.log(`Socket authenticated: ${socket.username}`);
       next();
     });
   });
@@ -100,6 +115,15 @@ const authenticateToken = (req, res, next) => {
     console.log('Token verified, user:', user); // Log verified user
     next();
   });
+};
+
+// Middleware to authorize admin role
+const authorizeAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    console.error('Access denied: Admins only');
+    return res.status(403).json({ error: 'Access denied: Admins only' });
+  }
+  next();
 };
 
 // Konfiguracija za multer
@@ -136,7 +160,7 @@ const updateAchievements = (userId, points, quizzesCompleted, correctAnswers) =>
       
       }else if (achievement.name === 'High Score' && points >= 50) {
         unlock = true;
-      } else if (achievement.name === 'Gold' && points >= 100) {
+      } else if (achievement.name === 'Gold Master' && points >= 100) {
         unlock = true;
       }
       if (unlock) {
@@ -169,12 +193,32 @@ const updateAchievements = (userId, points, quizzesCompleted, correctAnswers) =>
 };
 
 // WebSocket logika
+const onlineUsers = new Set(); // Track online users
+
+// Endpoint to get all users and their online status
+app.get('/users', authenticateToken, (req, res) => {
+  const query = 'SELECT id, username FROM users';
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching users:', err);
+      return res.status(500).json({ error: 'Error fetching users' });
+    }
+    const users = results.map(user => ({
+      ...user,
+      online: onlineUsers.has(user.id)
+    }));
+    res.json(users);
+  });
+});
 // Pohrana korisnika u sobi
 let roomUsersData = {}; // Svi podaci o korisnicima po sobama
+let roomCounter = 1; // Brojač za sobe
 
 
 io.on('connection', (socket) => {
   console.log('Korisnik povezan: ' + socket.id);
+
+  onlineUsers.add(socket.userId);
 
   socket.on('joinRoom', (roomId) => {
     const userId = socket.userId;
@@ -367,6 +411,7 @@ io.on('connection', (socket) => {
       }
     });
   });
+
   
           // Resetovanje sobe
           delete roomUsersData[roomId];
@@ -377,6 +422,13 @@ io.on('connection', (socket) => {
           try {
             const { question, correctAnswer } = await generateRandomQuestionAndAnswer(room.usedFacts);
             io.to(roomId).emit('newQuestion', { question, correctAnswer });
+
+            // Add the following code here
+              if (room) {
+                roomUsersData[roomId].forEach(user => {
+                  user.currentAnswer = ''; // Reset currentAnswer for each user
+                });
+              }
     
             // Spremanje novog točnog odgovora
             room.correctAnswer = correctAnswer;
@@ -390,6 +442,77 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('useHint', async (roomId) => {
+    const userId = socket.userId;
+    const query = 'SELECT hints FROM users WHERE id = ?';
+    db.query(query, [userId], (err, results) => {
+      if (err) {
+        console.error('Error fetching user hints:', err);
+        socket.emit('error', 'Error fetching user hints');
+        return;
+      }
+  
+      const userHints = results[0].hints;
+      if (userHints > 0) {
+        const updateQuery = 'UPDATE users SET hints = hints - 1 WHERE id = ?';
+        db.query(updateQuery, [userId], (err, result) => {
+          if (err) {
+            console.error('Error updating user hints:', err);
+            socket.emit('error', 'Error updating user hints');
+            return;
+          }
+  
+          const room = io.sockets.adapter.rooms.get(roomId);
+          const user = roomUsersData[roomId].find(user => user.id === socket.id);
+          user.currentAnswer = user.currentAnswer || ''; // Initialize currentAnswer if not set
+          const hint = generateHint(room.correctAnswer, user.currentAnswer); // Use generateHint function
+          user.currentAnswer = hint; // Update currentAnswer with the hint
+          socket.emit('hint', hint);
+        });
+      } else {
+        socket.emit('error', 'No hints available');
+      }
+    });
+  });
+
+  // Dodavanje događaja za izazivanje prijatelja
+  socket.on('challengeFriend', (friendUsername) => {
+    console.log(`Korisnik ${socket.username} izaziva ${friendUsername}`);
+    const friendSocket = findSocketByUsername(friendUsername);
+    if (friendSocket) {
+      console.log(`Pronađen prijatelj: ${friendUsername}, slanje izazova`);
+      friendSocket.emit('receiveChallenge', socket.username);
+    } else {
+      console.log(`Prijatelj ${friendUsername} nije pronađen`);
+    }
+  });
+  
+  socket.on('acceptChallenge', (challengerUsername) => {
+    console.log(`Korisnik ${socket.username} prihvaća izazov od ${challengerUsername}`);
+    const challengerSocket = findSocketByUsername(challengerUsername);
+    if (challengerSocket) {
+      const roomId = `room_${roomCounter++}`; // Generiranje jednostavnijeg imena sobe
+      console.log(`Kreiranje sobe: ${roomId}`);
+      socket.join(roomId);
+      challengerSocket.join(roomId);
+      io.to(roomId).emit('challengeAccepted', roomId);
+    } else {
+      console.log(`Izazivač ${challengerUsername} nije pronađen`);
+    }
+  });
+
+const findSocketByUsername = (username) => {
+  console.log(`Traženje socket-a za korisnika: ${username}`);
+  for (let [id, socket] of io.of("/").sockets) {
+    if (socket.username === username) {
+      console.log(`Pronađen socket za korisnika ${username}: ${id}`);
+      return socket;
+    }
+  }
+  console.log(`Socket za korisnika ${username} nije pronađen`);
+  return null;
+};
+
   // Handle chat messages
   socket.on('chatMessage', (message) => {
     const userMessage = `Korisnik ${socket.username}: ${message}`;
@@ -398,6 +521,8 @@ io.on('connection', (socket) => {
   
   socket.on('disconnect', () => {
     console.log('Korisnik isključen: ' + socket.id);
+    // Remove user from online users set
+    onlineUsers.delete(socket.userId);
     // Uklanjanje korisnika iz svih soba
     for (const roomId in roomUsersData) {
       roomUsersData[roomId] = roomUsersData[roomId].filter(user => user.id !== socket.id);
@@ -412,7 +537,7 @@ io.on('connection', (socket) => {
 
 // Ruta za registraciju
 app.post('/register', async (req, res) => {
-  const { username, email, password, confirmPassword } = req.body;
+  const { username, email, password, confirmPassword, role } = req.body;
 
   if (!username || !email || !password || !confirmPassword) {
     return res.status(400).json({ error: 'Sva polja su obavezna' });
@@ -424,8 +549,8 @@ app.post('/register', async (req, res) => {
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  const query = 'INSERT INTO users (username, email, password) VALUES (?, ?, ?)';
-  db.query(query, [username, email, hashedPassword], (err, result) => {
+  const query = 'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)';
+  db.query(query, [username, email, hashedPassword, role || 'user'], (err, result) => {
     if (err) {
       console.error(err);
       return res.status(500).json({ error: 'Greška pri registraciji' });
@@ -452,9 +577,9 @@ app.post('/login', (req, res) => {
       return res.status(401).send('Pogrešna lozinka.');
     }
 
-    const token = jwt.sign({ id: user.id }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
     console.log('Generated token:', token); // Log the generated token
-    res.json({ token, username: user.username });
+    res.json({ token, username: user.username, role: user.role });
   });
 });
 
@@ -636,7 +761,7 @@ app.post('/upload-profile-picture', authenticateToken, upload.single('profilePic
 app.get('/api/profile', authenticateToken, (req, res) => {
   const userId = req.user.id;
   const query = `
-    SELECT username, email, profile_picture, level, points
+    SELECT username, email, profile_picture, level, points, coins , hints
     FROM users
     WHERE id = ?
   `;
@@ -699,6 +824,183 @@ app.get('/api/profile/:friendId', authenticateToken, (req, res) => {
     });
   });
 });
+
+// Ruta za slanje poruke
+app.post('/send-message', authenticateToken, (req, res) => {
+  const { receiverId, content } = req.body;
+  const senderId = req.user.id;
+
+  console.log('Sending message from senderId:', senderId, 'to receiverId:', receiverId, 'with content:', content); // Debug log
+
+  const query = 'INSERT INTO messages (sender_id, receiver_id, content) VALUES (?, ?, ?)';
+  db.query(query, [senderId, receiverId, content], (err, result) => {
+    if (err) {
+      console.error('Error sending message:', err);
+      return res.status(500).json({ error: 'Error sending message' });
+    }
+    console.log('Message sent successfully'); // Debug log
+    res.status(200).json({ message: 'Message sent successfully' });
+  });
+});
+
+// Ruta za dohvaćanje poruka
+// Ruta za dohvaćanje poruka
+app.get('/messages', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const receiverId = req.query.receiverId;
+
+  console.log('Fetching messages for userId:', userId, 'and receiverId:', receiverId); // Debug log
+
+  const query = `
+    SELECT m.id, m.content, m.timestamp, m.is_read, u.username AS sender
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    WHERE (m.receiver_id = ? AND m.sender_id = ?) OR (m.receiver_id = ? AND m.sender_id = ?)
+    ORDER BY m.timestamp DESC
+  `;
+  db.query(query, [userId, receiverId, receiverId, userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching messages:', err);
+      return res.status(500).json({ error: 'Error fetching messages' });
+    }
+    console.log('Messages fetched successfully:', results); // Debug log
+    res.status(200).json(results);
+  });
+});
+
+// Ruta za označavanje poruke kao pročitane
+app.post('/mark-message-read', authenticateToken, (req, res) => {
+  const { messageId } = req.body;
+
+  const query = 'UPDATE messages SET is_read = TRUE WHERE id = ?';
+  db.query(query, [messageId], (err, result) => {
+    if (err) {
+      console.error('Error marking message as read:', err);
+      return res.status(500).json({ error: 'Error marking message as read' });
+    }
+    res.status(200).json({ message: 'Message marked as read' });
+  });
+});
+
+// Ruta za dohvaćanje korisnika (samo za administratore)
+app.get('/admin/users', authenticateToken, authorizeAdmin, (req, res) => {
+  const query = 'SELECT id, username, email, points, role FROM users';
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching users:', err);
+      return res.status(500).send('Greška pri dohvaćanju korisnika.');
+    }
+    res.json(results);
+  });
+});
+
+// Ruta za stvaranje korisnika (samo za administratore)
+app.post('/admin/users', authenticateToken, authorizeAdmin, (req, res) => {
+  const { username, email, password, role } = req.body;
+  const hashedPassword = bcrypt.hashSync(password, 10);
+
+  const query = 'INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)';
+  db.query(query, [username, email, hashedPassword, role], (err, result) => {
+    if (err) {
+      console.error('Error creating user:', err);
+      return res.status(500).json({ error: 'Error creating user' });
+    }
+    res.status(201).json({ message: 'User created successfully' });
+  });
+});
+
+// Ruta za ažuriranje korisnika (samo za administratore)
+app.put('/admin/users/:id', authenticateToken, authorizeAdmin, (req, res) => {
+  const { id } = req.params;
+  const { username, email, role } = req.body;
+
+  const query = 'UPDATE users SET username = ?, email = ?, role = ? WHERE id = ?';
+  db.query(query, [username, email, role, id], (err, result) => {
+    if (err) {
+      console.error('Error updating user:', err);
+      return res.status(500).json({ error: 'Error updating user' });
+    }
+    res.status(200).json({ message: 'User updated successfully' });
+  });
+});
+
+// Ruta za brisanje korisnika (samo za administratore)
+app.delete('/admin/users/:id', authenticateToken, authorizeAdmin, (req, res) => {
+  const { id } = req.params;
+
+  const query = 'DELETE FROM users WHERE id = ?';
+  db.query(query, [id], (err, result) => {
+    if (err) {
+      console.error('Error deleting user:', err);
+      return res.status(500).json({ error: 'Error deleting user' });
+    }
+    res.status(200).json({ message: 'User deleted successfully' });
+  });
+});
+
+
+//Ruta za dohvacanje hinta
+
+app.post('/shop/purchase-hint', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  console.log('User ID:', userId); // Debug log
+  const hintPrice = 10; // Set the price for a hint
+
+  const query = 'SELECT coins FROM users WHERE id = ?';
+  db.query(query, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching user coins:', err);
+      return res.status(500).json({ error: 'Error fetching user coins' });
+    }
+
+    console.log('User coins:', results[0].coins); // Debug log
+
+    const userCoins = results[0].coins;
+    if (userCoins >= hintPrice) {
+      const updateQuery = 'UPDATE users SET coins = coins - ?, hints = hints + 1 WHERE id = ?';
+      db.query(updateQuery, [hintPrice, userId], (err, result) => {
+        if (err) {
+          console.error('Error updating user coins and hints:', err);
+          return res.status(500).json({ error: 'Error updating user coins and hints' });
+        }
+        res.json({ success: true });
+      });
+    } else {
+      res.status(400).json({ error: 'Not enough coins' });
+    }
+  });
+});
+
+// Add this route to handle chest opening
+app.post('/shop/open-chest', authenticateToken, (req, res) => {
+  const userId = req.user.id;
+  const chestCost = 20; // Set the cost for opening the chest
+
+  const query = 'SELECT coins FROM users WHERE id = ?';
+  db.query(query, [userId], (err, results) => {
+    if (err) {
+      console.error('Error fetching user coins:', err);
+      return res.status(500).json({ error: 'Error fetching user coins' });
+    }
+
+    const userCoins = results[0].coins;
+    if (userCoins >= chestCost) {
+      const hintsWon = [1, 5, 10][Math.floor(Math.random() * 3)];
+      const updateQuery = 'UPDATE users SET coins = coins - ?, hints = hints + ? WHERE id = ?';
+      db.query(updateQuery, [chestCost, hintsWon, userId], (err, result) => {
+        if (err) {
+          console.error('Error updating user coins and hints:', err);
+          return res.status(500).json({ error: 'Error updating user coins and hints' });
+        }
+        res.json({ success: true, hintsWon });
+      });
+    } else {
+      res.status(400).json({ error: 'Not enough coins' });
+    }
+  });
+});
+
+
 
 // Pokrećemo server na portu 5000
 server.listen(5000, () => {
