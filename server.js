@@ -54,6 +54,7 @@ app.use('/icons', express.static(path.join(__dirname, 'icons')));
 
 
 // MySQL konfiguracija
+
 const db = mysql.createConnection({
   host: 'localhost',
   user: 'root',
@@ -138,8 +139,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Function to update achievements based on points and quizzes completed
-// Function to update achievements based on points and quizzes completed
+
 // Function to update achievements based on points and quizzes completed
 const updateAchievements = (userId, points, quizzesCompleted, correctAnswers) => {
   const achievementsQuery = `
@@ -210,6 +210,7 @@ app.get('/users', authenticateToken, (req, res) => {
     res.json(users);
   });
 });
+
 // Pohrana korisnika u sobi
 let roomUsersData = {}; // Svi podaci o korisnicima po sobama
 let roomCounter = 1; // Brojač za sobe
@@ -254,7 +255,7 @@ io.on('connection', (socket) => {
       socket.emit('roomMessage', 'Čekamo protivnika, ljudi u sobi 1/2');
     } else if (userCount === 2) {
       console.log('Emitiranje poruke: Korisnik je ušao u sobu');
-      io.to(roomId).emit('roomMessage', `Korisnik ${username} je ušao. Ljudi u sobi 2/2`);
+      io.to(roomId).emit('roomMessage', `Korisnik ${username} je ušao. Ljudi u sobi 2/2.`);
       console.log('Oba korisnika su u sobi, čekamo da budu spremni...');
     }
   });
@@ -441,6 +442,8 @@ io.on('connection', (socket) => {
       }
     }
   });
+
+  //Hint imeplementacija
 
   socket.on('useHint', async (roomId) => {
     const userId = socket.userId;
@@ -843,7 +846,7 @@ app.post('/send-message', authenticateToken, (req, res) => {
   });
 });
 
-// Ruta za dohvaćanje poruka
+
 // Ruta za dohvaćanje poruka
 app.get('/messages', authenticateToken, (req, res) => {
   const userId = req.user.id;
@@ -939,8 +942,7 @@ app.delete('/admin/users/:id', authenticateToken, authorizeAdmin, (req, res) => 
 });
 
 
-//Ruta za dohvacanje hinta
-
+//Ruta za kupovinu hinta
 app.post('/shop/purchase-hint', authenticateToken, (req, res) => {
   const userId = req.user.id;
   console.log('User ID:', userId); // Debug log
