@@ -70,6 +70,11 @@ db.connect((err) => {
   }
 });
 
+// Rukujte svim GET zahtjevima vraćanjem `index.html`
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
+
 // Middleware to authenticate user and attach userId and username to socket
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
@@ -1031,7 +1036,8 @@ app.post('/shop/open-second-chest', authenticateToken, (req, res) => {
   });
 });
 
-// Pokrećemo server na portu 5000
-server.listen(5000, () => {
-  console.log('Server pokrenut na http://localhost:5000');
+// Pokrenite server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server radi na portu ${PORT}`);
 });
