@@ -52,6 +52,8 @@ app.use(bodyParser.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/icons', express.static(path.join(__dirname, 'icons')));
 
+// Servirajte statičke fajlove iz React build direktorija
+app.use(express.static(path.join(__dirname, 'client', 'build')));
 
 // MySQL konfiguracija
 
